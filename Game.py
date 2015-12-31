@@ -1,5 +1,20 @@
 import libtcodpy as libtcod
 
+class Rect:
+    def __init__(self, x, y, w, h):
+        self.x1 = x
+        self.y1 = y
+        self.x2 = x + w
+        self.y2 = y + h
+        
+    def center(self):
+        centerX = (self.x1 + self.x2) / 2
+        centerY = (self.y1 + self.y2) / 2
+        return (centerX, centerY)
+    
+    def intersect(self, other_rect):
+        return (self.x1 <= other_rect.x2 and self.x2 >= other_rect.x1 and self.y1 <= other_rect.y2 and self.y2 >= other_rect.y1)
+        
 class Object:
     #generic class for handling anything in the game
     def __init__(self, x, y, char, color):
@@ -69,16 +84,71 @@ def render_all():
 
 def make_map():
     global gameMap
-    gameMap = [Tile(False) for t in range(MAP_WIDTH * MAP_HEIGHT)]
-    gameMap[offset(30, 22, MAP_WIDTH)].blocked = True
-    gameMap[offset(30, 22, MAP_WIDTH)].block_sight = True
-    gameMap[offset(50, 22, MAP_WIDTH)].blocked = True
-    gameMap[offset(50, 22, MAP_WIDTH)].block_sight = True
+    
+    gameMap = [Tile(True) for t in range(MAP_WIDTH * MAP_HEIGHT)]
+    
+    rooms = []
+    num_rooms = 0
+   
+    for r in range(MAX_ROOMS):
+        w = libtcod.random_get_int(0, ROOM_MIN_SIZE, ROOM_MAX_SIZE)
+        h = libtcod.random_get_int(0, ROOM_MIN_SIZE, ROOM_MAX_SIZE)
+        x = libtcod.random_get_int(0, 0, MAP_WIDTH - w - 1)
+        y = libtcod.random_get_int(0, 0, MAP_HEIGHT - h - 1)
+       
+        new_room = Rect(x, y, w, h)
+        
+        failed = False
+        for room in rooms:
+            if new_room.intersect(room):
+                failed = True
+                break
+        if not failed:
+            create_room(new_room)
+            
+            (cX, cY) = new_room.center()
+            
+            if num_rooms == 0:
+                player.x = cX
+                player.y = cY
+            else:
+                (oldX, oldY) = rooms[num_rooms-1].center()
+                
+                if libtcod.random_get_int(0, 0, 1) == 1:
+                    create_h_tunnel(oldX, cX, oldY)
+                    create_v_tunnel(oldY, cY, cX)
+                else:
+                    create_v_tunnel(oldY, cY, oldX)
+                    create_h_tunnel(oldX, cX, cY)
+            rooms.append(new_room)
+            num_rooms += 1
+
+def create_room(room_rect):
+    global gameMap
+    for x in range(room_rect.x1 + 1, room_rect.x2):
+        for y in range(room_rect.y1 + 1, room_rect.y2):
+            gameMap[offset(x, y, MAP_WIDTH)].blocked = False
+            gameMap[offset(x, y, MAP_WIDTH)].block_sight = False
+            
+def create_h_tunnel(x1, x2, y):
+    global gameMap
+    for x in range(min(x1, x2), max(x1, x2) + 1):
+        gameMap[offset(x, y, MAP_WIDTH)].blocked = False
+        gameMap[offset(x, y, MAP_WIDTH)].block_sight = False
+        
+def create_v_tunnel(y1, y2, x):
+    global gameMap
+    for y in range(min(y1, y2), max(y1, y2) + 1):
+        gameMap[offset(x, y, MAP_WIDTH)].blocked = False
+        gameMap[offset(x, y, MAP_WIDTH)].block_sight = False
 
 SCREEN_WIDTH = 80
 SCREEN_HEIGHT = 50
 MAP_WIDTH = 80
 MAP_HEIGHT = 45
+ROOM_MAX_SIZE = 10
+ROOM_MIN_SIZE = 6
+MAX_ROOMS = 30
 LIMIT_FPS = 20
 
 color_dark_wall = libtcod.Color(0, 0, 100)
@@ -88,7 +158,7 @@ libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, "Roguez", False)
 con = libtcod.console_new(SCREEN_WIDTH, SCREEN_HEIGHT)
 libtcod.sys_set_fps(LIMIT_FPS)
 
-player = Object(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, '@', libtcod.white)
+player = Object(25, 23, '@', libtcod.white)
 npc = Object(SCREEN_WIDTH/2 - 5, SCREEN_HEIGHT/2, '@', libtcod.yellow)
 objects = [npc, player]
 
