@@ -19,7 +19,7 @@ class Rect:
         
 class Object:
     # generic class for handling anything in the game
-    def __init__(self, x, y, char, name, color, blocks=False, fighter=None, ai=None):
+    def __init__(self, x, y, char, name, color, blocks=False, fighter=None, ai=None, item = None):
         self.x = x
         self.y = y
         self.char = char
@@ -33,6 +33,10 @@ class Object:
         self.ai = ai
         if self.ai:
             self.ai.owner = self
+            
+        self.item = item
+        if self.item:
+            self.item.owner = self
         
     def move(self, dx, dy):
         if((0 <= (self.x + dx)  and (self.x + dx) < MAP_WIDTH) and (0 <= (self.y + dy) and (self.y + dy) < MAP_HEIGHT)):
@@ -67,6 +71,25 @@ class Object:
         global objects
         objects.remove(self)
         objects.insert(0, self)
+
+class Item:
+    def __init__(self, use_function = None):
+        self.use_function = use_function
+        
+    def use(self):
+        if self.use_function is None:
+            message('The ' + self.owner.name + ' cannot be used.')
+        else:
+            if self.use_function() != 'cancelled':
+                inventory.remove(self.owner)
+        
+    def pick_up(self):
+        if len(inventory) >= MAX_INVENTORY_SLOTS:
+            message('Your inventory is full. You cannot pick up ' + self.owner.name + '.', libtcod.red)
+        else:
+            inventory.append(self.owner)
+            objects.remove(self.owner)
+            message('You picked up a ' + self.owner.name + '.', libtcod.amber)
         
 class Fighter:
     def __init__(self, hp, defense, power, death_function=None):
@@ -93,7 +116,12 @@ class Fighter:
             target.fighter.take_damage(damage)
         else:
             message(self.owner.name + ' attacks ' + target.name + ' but it has no effect!')
-        
+    
+    def heal(self, amount):
+        self.hp += amount
+        if self.hp > self.max_hp:
+            self.hp = self.max_hp
+    
 class BasicMonster:
     def take_turn(self):
         monster = self.owner
@@ -161,6 +189,18 @@ def handle_keys():
             player_move_or_attack(1, 0)
             fov_recompute = True
         else:
+            key_char = chr(key.c)
+            if key_char == 'g':
+                for gameObject in objects:
+                    if gameObject.x == player.x and gameObject.y and gameObject.item:
+                        gameObject.item.pick_up()
+                        break
+            if key_char == 'i':
+                #show the inventory
+                chosen_item = inventory_menu('Press the key next to an item to use it, or any other to cancel.\n')
+                if chosen_item is not None:
+                    chosen_item.use()
+                    
             return PlayerActions.NO_MOVE
 
 def player_move_or_attack(dx, dy):
@@ -271,7 +311,7 @@ def make_map():
                 break
         if not failed:
             create_room(new_room)
-            place_monsters(new_room)
+            place_objects(new_room)
             
             (cX, cY) = new_room.center()
             
@@ -309,27 +349,38 @@ def create_v_tunnel(y1, y2, x):
         gameMap[offset(x, y, MAP_WIDTH)].blocked = False
         gameMap[offset(x, y, MAP_WIDTH)].block_sight = False
         
-def place_monsters(room_rect):
+def place_objects(room_rect):
     num_monsters = libtcod.random_get_int(0, 0, MAX_ROOM_MONSTERS)
     
     for i in range(num_monsters):
-        x = libtcod.random_get_int(0, room_rect.x1, room_rect.x2)
-        y = libtcod.random_get_int(0, room_rect.y1, room_rect.y2)
+        x = libtcod.random_get_int(0, room_rect.x1 + 1, room_rect.x2 - 1)
+        y = libtcod.random_get_int(0, room_rect.y1 + 1, room_rect.y2 - 1)
         
         if not is_blocked(x, y):
             typeOfMonster = libtcod.random_get_int(0, 0, 100)
             if typeOfMonster < 80:
                 # Orc
-                fighter_component = Fighter(hp=100, defense=0, power=8, death_function=monster_death)
+                fighter_component = Fighter(hp=40, defense=0, power=8, death_function=monster_death)
                 ai_component = BasicMonster()
                 monster = Object(x, y, 'o', 'Orc', libtcod.desaturated_green, blocks=True, fighter=fighter_component, ai=ai_component)
             else:
                 # Troll
-                fighter_component = Fighter(hp=120, defense=3, power=9, death_function=monster_death)
+                fighter_component = Fighter(hp=60, defense=3, power=9, death_function=monster_death)
                 ai_component = BasicMonster()
                 monster = Object(x, y, 'T', 'Troll', libtcod.darker_green, blocks=True, fighter=fighter_component, ai=ai_component)
             
             objects.append(monster)
+    
+    num_items = libtcod.random_get_int(0, 0, MAX_ROOM_ITEMS)
+    for i in range(num_items):
+        x = libtcod.random_get_int(0, room_rect.x1 + 1, room_rect.x2 - 1)
+        y = libtcod.random_get_int(0, room_rect.y1 + 1, room_rect.y2 - 1)
+        
+        if not is_blocked(x, y):
+            item_component = Item(use_function=cast_heal)
+            item = Object(x, y, '!', 'Healing Potion', libtcod.violet, item=item_component)
+            objects.append(item)
+            item.send_to_back()
 
 def is_blocked(x, y):
     if(gameMap[offset(x, y, MAP_WIDTH)].blocked):
@@ -360,7 +411,51 @@ def message(new_msg, color = libtcod.white):
         if len(game_msgs) == MSG_HEIGHT:
             del game_msgs[0]
         game_msgs.append((line, color))
-
+        
+def menu(header, options, width):
+    #add functionality of pages
+    header_height = libtcod.console_get_height_rect(con, 0, 0, width, SCREEN_HEIGHT, header)
+    height = len(options) + header_height
+    
+    window = libtcod.console_new(width, height)
+    
+    libtcod.console_set_default_foreground(window, libtcod.white)
+    libtcod.console_print_rect_ex(window, 0, 0, width, height, libtcod.BKGND_NONE, libtcod.LEFT, header)
+    
+    y = header_height
+    letter_index = ord('a')
+    for option_text in options:
+        text = '(' + chr(letter_index) + ') ' + option_text
+        libtcod.console_print_ex(window, 0, y, libtcod.BKGND_NONE, libtcod.LEFT, text)
+        y += 1
+        letter_index += 1
+    
+    x = SCREEN_WIDTH/2 - width/2
+    y = SCREEN_HEIGHT/2 - height/2
+    libtcod.console_blit(window, 0, 0, width, height, 0, x, y, 1.0, 0.7)
+    
+    libtcod.console_flush()
+    key = libtcod.console_wait_for_keypress(True)
+    index = key.c - ord('a')
+    if index >= 0 and index < len(options): return index
+    return None
+    
+def inventory_menu(header):
+    if len(inventory) == 0:
+        options = ['Inventory is empty.']
+    else:
+        options = [item.name for item in inventory]
+    index = menu(header, options, INVENTORY_WIDTH)
+    if index is None or len(inventory) == 0: return None
+    return inventory[index].item
+    
+def cast_heal():
+    if player.fighter.hp >= player.fighter.max_hp:
+        message('You are already at full health.', libtcod.red)
+        return 'cancelled'
+    message('Your wounds start to feel better', libtcod.light_violet)
+    player.fighter.heal(HEAL_AMOUNT)
+    
 SCREEN_WIDTH = 80
 SCREEN_HEIGHT = 50
 
@@ -376,6 +471,7 @@ ROOM_MIN_SIZE = 6
 
 MAX_ROOMS = 30
 MAX_ROOM_MONSTERS = 3
+MAX_ROOM_ITEMS = 2
 
 LIMIT_FPS = 20
 
@@ -386,6 +482,10 @@ MSG_HEIGHT = PANEL_HEIGHT - 1
 FOV_ALGO = 0
 FOV_LIGHT_WALLS = True
 TORCH_RADIUS = 10
+
+MAX_INVENTORY_SLOTS = 26
+INVENTORY_WIDTH = 50
+HEAL_AMOUNT = 20
 
 GameStates = enum('PLAYING', 'GAME_OVER')
 PlayerActions = enum('NONE', 'NO_MOVE', 'EXIT')
@@ -405,6 +505,7 @@ libtcod.sys_set_fps(LIMIT_FPS)
 player_fighter = Fighter(hp=100, defense=6, power=15, death_function=player_death)
 player = Object(0, 0, '@', 'Player', libtcod.white, blocks=True, fighter=player_fighter)
 objects = [player]
+inventory = []
 
 make_map()
 fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
